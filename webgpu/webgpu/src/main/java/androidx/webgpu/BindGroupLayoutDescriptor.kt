@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 The Android Open Source Project
+ * Copyright (C) 2025 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,15 +14,14 @@
  * limitations under the License.
  */
 
-package androidx.room3.vo
+package androidx.webgpu
 
-import androidx.room3.compiler.processing.XMethodElement
-
-/**
- * Represents a DAO function that delegates to a concrete implementation, specifically to override a
- * Kotlin interface whose implementation is in the DefaultImpl generated class.
- */
-data class KotlinDefaultFunctionDelegate(
-    // the original element, not the stub that is generated for DefaultImpls
-    val element: XMethodElement
+/** A description of the layout for a single bind group. */
+public class BindGroupLayoutDescriptor
+@JvmOverloads
+constructor(
+    /** The label for the bind group layout. */
+    public var label: String? = null,
+    /** An array of entries defining each resource binding within the group. */
+    public var entries: Array<BindGroupLayoutEntry> = arrayOf(),
 )

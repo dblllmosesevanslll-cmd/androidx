@@ -16,21 +16,26 @@
 
 package androidx.xr.compose.spatial
 
+import android.content.Context
 import android.graphics.Color
 import android.view.View
+import android.view.ViewParent
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.ZeroCornerSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ComposableOpenTarget
-import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.CompositionContext
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.RememberObserver
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.currentComposer
+import androidx.compose.runtime.currentCompositeKeyHash
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCompositionContext
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,7 +43,10 @@ import androidx.compose.ui.UiComposable
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -49,17 +57,24 @@ import androidx.compose.ui.util.fastFold
 import androidx.compose.ui.util.fastForEach
 import androidx.compose.ui.util.fastMap
 import androidx.core.graphics.drawable.toDrawable
-import androidx.xr.compose.platform.LocalCoreEntity
+import androidx.core.viewtree.setViewTreeDisjointParent
+import androidx.lifecycle.findViewTreeLifecycleOwner
+import androidx.lifecycle.findViewTreeViewModelStoreOwner
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.savedstate.findViewTreeSavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import androidx.xr.compose.R
 import androidx.xr.compose.platform.LocalCoreMainPanelEntity
 import androidx.xr.compose.platform.LocalDialogManager
-import androidx.xr.compose.platform.LocalOpaqueEntity
 import androidx.xr.compose.platform.LocalSession
 import androidx.xr.compose.platform.LocalSpatialCapabilities
+import androidx.xr.compose.platform.findNearestParentEntity
+import androidx.xr.compose.subspace.layout.CoreEntity
 import androidx.xr.compose.subspace.layout.CorePanelEntity
 import androidx.xr.compose.subspace.layout.SpatialRoundedCornerShape
 import androidx.xr.compose.subspace.layout.SpatialShape
 import androidx.xr.compose.subspace.node.SubspaceNodeApplier
-import androidx.xr.compose.subspace.rememberComposeView
 import androidx.xr.compose.unit.IntVolumeSize
 import androidx.xr.runtime.Session
 import androidx.xr.runtime.math.IntSize2d
@@ -213,77 +228,25 @@ private fun Orbiter(data: OrbiterData) {
 @Composable
 internal fun PositionedOrbiter(data: OrbiterData, content: @Composable @UiComposable () -> Unit) {
     val session = checkNotNull(LocalSession.current) { "session must be initialized" }
+    val parentView = LocalView.current
+    @Suppress("DEPRECATION") val localId = currentCompositeKeyHash
+    val context = LocalContext.current
+    val compositionContext = rememberCompositionContext()
+    val parentEntity: CoreEntity? = findNearestParentEntity()
 
-    /**
-     * Determine the reference panel size for Orbiter positioning.
-     * 1. If parent entity is present, Orbiter is nested within a specific spatial component (e.g.,
-     *    MainPanel, SpatialPanel) and uses its size.
-     * 2. Otherwise, Orbiter is not explicitly parented within a Subspace()'s spatial entity. This
-     *    occurs if Orbiter is used: a) Directly in `setContent { Orbiter(...) }` for a traditional
-     *    2D Compose app. b) Inside a `Subspace { Orbiter(...) }` but not as a child of a CoreEntity
-     *    provider. In these cases, Orbiter defaults to the main window's size, which are fetched
-     *    and kept updated by getMainWindowSize().
-     */
-    val targetEntity = LocalCoreEntity.current
-    val parentEntity = targetEntity ?: LocalCoreMainPanelEntity.current
-    val panelSize: IntVolumeSize = targetEntity?.mutableSize ?: getMainWindowSize(session)
-
-    val view = rememberComposeView()
-    val panelEntity = remember {
-        CorePanelEntity(
-                PanelEntity.create(
-                    session = session,
-                    view = view,
-                    pixelDimensions = IntSize2d(0, 0),
-                    name = "Orbiter:${view.id}",
-                )
-            )
-            .apply { enabled = false }
+    val holder = remember {
+        SpatialOrbiter(
+            context = context,
+            parentView = parentView,
+            compositionContext = compositionContext,
+            session = session,
+            localId = localId,
+            initialOrbiterData = data,
+            initialParentEntity = parentEntity,
+        )
     }
 
-    DisposableEffect(panelEntity) { onDispose { panelEntity.dispose() } }
-
-    view.setContent {
-        val constraints = Constraints(maxWidth = panelSize.width, maxHeight = panelSize.height)
-
-        CompositionLocalProvider(LocalOpaqueEntity provides panelEntity) {
-            Layout(content = content) { measurables, _ ->
-                val placeables = measurables.fastMap { it.measure(constraints) }
-                val contentSize =
-                    placeables.fastFold(IntSize.Zero) { acc, placeable ->
-                        IntSize(
-                            acc.width.coerceAtLeast(placeable.width),
-                            acc.height.coerceAtLeast(placeable.height),
-                        )
-                    }
-
-                layout(contentSize.width, contentSize.height) {
-                    placeables.fastForEach { it.place(0, 0) }
-
-                    panelEntity.size = IntVolumeSize(contentSize.width, contentSize.height, 0)
-                    val pose =
-                        calculatePose(
-                            data.calculateOffset(
-                                IntSize(constraints.maxWidth, constraints.maxHeight),
-                                contentSize,
-                                this@Layout,
-                            ),
-                            IntSize(constraints.maxWidth, constraints.maxHeight),
-                            contentSize,
-                            this@Layout,
-                            data.elevation,
-                        )
-                    panelEntity.poseInMeters = pose
-                    panelEntity.parent = parentEntity
-                    panelEntity.setShape(data.shape, this@Layout)
-                    panelEntity.enabled = true
-                }
-            }
-
-            // The scrim needs to be after the content so that it can capture input.
-            PanelScrim()
-        }
-    }
+    SideEffect { holder.update(data, parentEntity, content) }
 }
 
 @Composable
@@ -350,12 +313,175 @@ private fun getMainWindowSize(session: Session): IntVolumeSize {
     return panelSize
 }
 
+/**
+ * A helper class that manages the lifecycle and composition of an Orbiter.
+ *
+ * It implements [RememberObserver] to tie the creation and disposal of the necessary infrastructure
+ * ([ComposeView] and [CorePanelEntity]) to the lifecycle of the composable that uses it.
+ *
+ * @param context The Android [Context] used to create the internal [ComposeView].
+ * @param parentView The parent Android [View] used to establish View Tree ownership (Lifecycle,
+ *   ViewModel, etc.).
+ * @param compositionContext The [CompositionContext] of the parent composable to link the new
+ *   composition tree.
+ * @param session The active XR [Session] required for creating the [PanelEntity].
+ * @param localId A unique ID used for saving/restoring state within the Orbiter's composition.
+ * @param initialOrbiterData The initial configuration data for the [Orbiter], including offset,
+ *   elevation, and shape. Subsequent updates are handled via the [update] function.
+ * @param initialParentEntity The initial [CoreEntity] in the spatial scene to which the new Orbiter
+ *   entity should be parented. This is crucial for the Orbiter to appear in the correct spatial
+ *   hierarchy. Subsequent updates are handled via the [update] function.
+ */
+private class SpatialOrbiter(
+    private var context: Context,
+    private var parentView: View,
+    private var compositionContext: CompositionContext,
+    private var session: Session,
+    private var localId: Int,
+    initialOrbiterData: OrbiterData,
+    initialParentEntity: CoreEntity?,
+) : RememberObserver {
+
+    private var view: ComposeView? = null
+    private var panelEntity: CorePanelEntity? = null
+    private var orbiterData: OrbiterData by mutableStateOf(initialOrbiterData)
+    private var parentEntity: CoreEntity? by mutableStateOf(initialParentEntity)
+    private var content by mutableStateOf<@Composable () -> Unit>({})
+
+    override fun onRemembered() {
+
+        view =
+            ComposeView(context).apply {
+                id = android.R.id.content
+
+                // Set the strategy to automatically dispose the composition
+                // when the ComposeView is detached from the window.
+                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+
+                setViewTreeLifecycleOwner(parentView.findViewTreeLifecycleOwner())
+                setViewTreeViewModelStoreOwner(parentView.findViewTreeViewModelStoreOwner())
+                setViewTreeSavedStateRegistryOwner(parentView.findViewTreeSavedStateRegistryOwner())
+                // Dispose of the Composition when the view's LifecycleOwner is destroyed
+                setParentCompositionContext(compositionContext)
+
+                // Set unique id for AbstractComposeView. This allows state restoration
+                // for the state defined inside the SpatialElevation via rememberSaveable().
+                setTag(
+                    androidx.compose.ui.R.id.compose_view_saveable_id_tag,
+                    "ComposeView:$localId",
+                )
+
+                // Enable children to draw their shadow by not clipping them
+                clipChildren = false
+            }
+
+        panelEntity =
+            view
+                ?.let {
+                    CorePanelEntity(
+                        PanelEntity.create(
+                            session = session,
+                            view = it,
+                            pixelDimensions = IntSize2d(0, 0),
+                            name = "Orbiter:${view?.id}",
+                        )
+                    )
+                }
+                .apply {
+                    this?.enabled = false
+                    view?.setTag(R.id.compose_xr_local_view_entity, this)
+                }
+
+        view?.setViewTreeDisjointParent(parentView as? ViewParent ?: parentView.parent)
+
+        view?.setContent {
+            val panelSize: IntVolumeSize =
+                if (parentEntity == LocalCoreMainPanelEntity.current) {
+                    getMainWindowSize(session)
+                } else {
+                    parentEntity?.mutableSize ?: IntVolumeSize.Zero
+                }
+            val constraints = Constraints(maxWidth = panelSize.width, maxHeight = panelSize.height)
+            Layout(content = content) { measurables, _ ->
+                val placeables = measurables.fastMap { it.measure(constraints) }
+                val contentSize =
+                    placeables.fastFold(IntSize.Zero) { acc, placeable ->
+                        IntSize(
+                            acc.width.coerceAtLeast(placeable.width),
+                            acc.height.coerceAtLeast(placeable.height),
+                        )
+                    }
+                layout(contentSize.width, contentSize.height) {
+                    placeables.fastForEach { it.place(0, 0) }
+                    panelEntity?.size = IntVolumeSize(contentSize.width, contentSize.height, 0)
+                    val pose =
+                        calculatePose(
+                            orbiterData.calculateOffset(
+                                IntSize(constraints.maxWidth, constraints.maxHeight),
+                                contentSize,
+                                this@Layout,
+                            ),
+                            IntSize(constraints.maxWidth, constraints.maxHeight),
+                            contentSize,
+                            this@Layout,
+                            orbiterData.elevation,
+                        )
+                    panelEntity?.poseInMeters = pose
+                    panelEntity?.parent = parentEntity
+                    panelEntity?.setShape(orbiterData.shape, this@Layout)
+                    panelEntity?.enabled = true
+                }
+            }
+            // The scrim needs to be after the content so that it can capture input.
+            PanelScrim()
+        }
+    }
+
+    override fun onForgotten() {
+        panelEntity?.dispose()
+        view?.disposeComposition()
+    }
+
+    override fun onAbandoned() {
+        // No-op. If resources were created during 'init' (constructor),
+        // they should be released here since onRemembered() was never called.
+    }
+
+    /**
+     * Updates the configuration, parent entity, and content of the Orbiter.
+     *
+     * Setting these parameters updates the internal [mutableStateOf] properties, which
+     * automatically triggers a recomposition of the Orbiter's content and a re-layout and
+     * re-positioning of the underlying [CorePanelEntity].
+     *
+     * @param orbiterData The new configuration data to be applied.
+     * @param parentEntity The new spatial parent entity.
+     * @param content The new composable lambda to render inside the Orbiter's surface.
+     */
+    fun update(
+        orbiterData: OrbiterData,
+        parentEntity: CoreEntity?,
+        content: @Composable () -> Unit,
+    ) {
+        if (orbiterData != this.orbiterData) {
+            this.orbiterData = orbiterData
+        }
+        if (parentEntity != this.parentEntity) {
+            this.parentEntity = parentEntity
+        }
+        if (content !== this.content) {
+            this.content = content
+        }
+    }
+}
+
 /** An enum that represents the edges of a view where an orbiter can be placed. */
 public sealed interface ContentEdge {
     public class Horizontal private constructor(private val displayName: String) : ContentEdge {
         public companion object {
             /** Positioning constant to place an orbiter above the content's top edge. */
             public val Top: Horizontal = Horizontal("Top")
+
             /** Positioning constant to place an orbiter below the content's bottom edge. */
             public val Bottom: Horizontal = Horizontal("Bottom")
         }
@@ -373,6 +499,7 @@ public sealed interface ContentEdge {
              * Positioning constant to place an orbiter at the start of the content's starting edge.
              */
             public val Start: Vertical = Vertical("Start")
+
             /** Positioning constant to place an orbiter at the end of the content's ending edge. */
             public val End: Vertical = Vertical("End")
         }
@@ -386,10 +513,13 @@ public sealed interface ContentEdge {
     public companion object {
         /** The top edge. */
         public val Top: Horizontal = Horizontal.Top
+
         /** The bottom edge. */
         public val Bottom: Horizontal = Horizontal.Bottom
+
         /** The start edge. */
         public val Start: Vertical = Vertical.Start
+
         /** The end edge. */
         public val End: Vertical = Vertical.End
     }
@@ -401,6 +531,7 @@ public value class OrbiterOffsetType private constructor(private val value: Int)
     public companion object {
         /** The edge of the orbiter that is facing away from the content element. */
         public val OuterEdge: OrbiterOffsetType = OrbiterOffsetType(0)
+
         /** The edge of the orbiter that is directly facing the content element. */
         public val InnerEdge: OrbiterOffsetType = OrbiterOffsetType(1)
 

@@ -38,7 +38,7 @@ buildscript {
         if (agpOverride != null) {
             classpath("com.android.settings:com.android.settings.gradle.plugin:$agpOverride")
         } else {
-            classpath("com.android.settings:com.android.settings.gradle.plugin:9.0.0-alpha13")
+            classpath("com.android.settings:com.android.settings.gradle.plugin:9.0.0-beta02")
         }
         // set guava version to be compatible with Depdendency analysis gradle plugin
         classpath("com.google.guava:guava:33.3.1-jre")
@@ -602,6 +602,8 @@ includeProject(":compose:material3:material3-adaptive-navigation-suite:material3
 includeProject(":compose:material3:material3-lint", [BuildType.COMPOSE])
 includeProject(":compose:material3:material3-window-size-class", [BuildType.COMPOSE])
 includeProject(":compose:material3:material3-window-size-class:material3-window-size-class-samples", "compose/material3/material3-window-size-class/samples", [BuildType.COMPOSE])
+includeProject(":compose:material3:material3-xr", [BuildType.COMPOSE])
+includeProject(":compose:material3:material3-xr-adaptive", [BuildType.COMPOSE])
 includeProject(":compose:material:material", [BuildType.COMPOSE])
 includeProject(":compose:material:material-benchmark", "compose/material/material/benchmark", [BuildType.COMPOSE])
 includeProject(":compose:material:material-lint", [BuildType.COMPOSE])
@@ -1184,6 +1186,7 @@ includeProject(":wear:watchface:watchface-complications-data-source", [BuildType
 includeProject(":wear:watchface:watchface-complications-data-source-ktx", [BuildType.MAIN, BuildType.WEAR])
 includeProject(":wear:watchface:watchface-complications-data-source-samples", [BuildType.MAIN, BuildType.WEAR])
 includeProject(":wear:watchfacepush:watchfacepush", [BuildType.MAIN, BuildType.WEAR])
+includeProject(":webgpu:webgpu", [BuildType.MAIN])
 includeProject(":webkit:integration-tests:instrumentation", [BuildType.MAIN])
 includeProject(":webkit:integration-tests:common", [BuildType.MAIN])
 includeProject(":webkit:integration-tests:testapp", [BuildType.MAIN])
@@ -1242,6 +1245,7 @@ includeProject(":xr:glimmer:glimmer:glimmer-samples", "xr/glimmer/glimmer/sample
 includeProject(":xr:glimmer:integration-tests:demos", [BuildType.COMPOSE])
 includeProject(":xr:projected:projected", [BuildType.XR])
 includeProject(":xr:projected:integration-tests:testapp", [BuildType.XR])
+includeProject(":xr:projected:projected-binding", [BuildType.XR])
 includeProject(":xr:runtime:runtime", [BuildType.XR])
 includeProject(":xr:runtime:runtime-manifest", [BuildType.XR])
 includeProject(":xr:runtime:runtime-rxjava3", [BuildType.XR])
